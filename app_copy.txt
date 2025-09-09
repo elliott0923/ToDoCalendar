@@ -1,0 +1,315 @@
+// Config
+const START_MIN = 8 * 60;   // 08:00
+const END_MIN = 22 * 60;    // 22:00
+const SLOT_MIN = 10;        // 10-minute slots
+const ROWS = (END_MIN - START_MIN) / SLOT_MIN;
+
+// State: occupancy[day][slot] => boolean
+const occupancy = Array.from({ length: 7 }, () => Array(ROWS).fill(false));
+
+// DOM refs
+const grid = document.getElementById('grid');
+const todoForm = document.getElementById('todo-form');
+const todoList = document.getElementById('todo-list');
+const taskTemplate = document.getElementById('task-template');
+const courseForm = document.getElementById('course-form');
+
+// Utils
+function minutesToLabel(minsFromMidnight) {
+  const h = Math.floor(minsFromMidnight / 60).toString().padStart(2, '0');
+  const m = (minsFromMidnight % 60).toString().padStart(2, '0');
+  return `${h}:${m}`;
+}
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+function durationToSlots(mins) { return Math.ceil(mins / SLOT_MIN); }
+
+function cellIndex(day, slot) {
+  const colWidth = (grid.clientWidth - 60) / 7; // exclude time column
+  const rowHeight = parseFloat(getComputedStyle(grid).gridAutoRows);
+  const left = 60 + day * colWidth;
+  const top = slot * rowHeight;
+  return { left, top, colWidth, rowHeight };
+}
+function getIndicesFromPointer(clientX, clientY) {
+  const rect = grid.getBoundingClientRect();
+  const x = clientX - rect.left;
+  const y = clientY - rect.top;
+  const innerX = x - 60; // after time column
+  if (innerX < 0) return null;
+  const colWidth = (grid.clientWidth - 60) / 7;
+  const rowHeight = parseFloat(getComputedStyle(grid).gridAutoRows);
+  const day = Math.floor(innerX / colWidth);
+  const slot = Math.floor(y / rowHeight);
+  if (day < 0 || day > 6 || slot < 0 || slot >= ROWS) return null;
+  return { day, slot };
+}
+
+function createGrid() {
+  const slotsPerHour = 60 / SLOT_MIN; // 6 when SLOT_MIN=10
+  for (let r = 0; r < ROWS; r++) {
+    const t = START_MIN + r * SLOT_MIN;
+    const timeCell = document.createElement('div');
+    timeCell.className = 'time-cell time-col';
+    timeCell.textContent = (r % slotsPerHour === 0) ? minutesToLabel(t) : '';
+    grid.appendChild(timeCell);
+    for (let d = 0; d < 7; d++) {
+      const slotCell = document.createElement('div');
+      slotCell.className = 'slot-cell';
+      slotCell.dataset.day = String(d);
+      slotCell.dataset.slot = String(r);
+      grid.appendChild(slotCell);
+    }
+  }
+}
+
+function clearHighlights() {
+  grid.querySelectorAll('.highlight-valid, .highlight-invalid')
+    .forEach(el => el.classList.remove('highlight-valid', 'highlight-invalid'));
+}
+
+function canPlace(day, startSlot, neededSlots, ignoreRange) {
+  if (startSlot < 0 || startSlot + neededSlots > ROWS) return false;
+  for (let i = 0; i < neededSlots; i++) {
+    const idx = startSlot + i;
+    let occ = occupancy[day][idx];
+    if (ignoreRange && ignoreRange.day === day && idx >= ignoreRange.start && idx < ignoreRange.end) occ = false;
+    if (occ) return false;
+  }
+  return true;
+}
+
+function highlightRange(day, startSlot, neededSlots, valid) {
+  for (let i = 0; i < neededSlots; i++) {
+    const slot = startSlot + i;
+    if (slot < 0 || slot >= ROWS) continue;
+    const cell = grid.querySelector(`.slot-cell[data-day='${day}'][data-slot='${slot}']`);
+    if (!cell) continue;
+    cell.classList.add(valid ? 'highlight-valid' : 'highlight-invalid');
+  }
+}
+
+function occupyRange(day, startSlot, slots, value = true) {
+  for (let i = 0; i < slots; i++) occupancy[day][startSlot + i] = value;
+}
+
+function positionEventEl(el) {
+  const day = parseInt(el.dataset.day, 10);
+  const startSlot = parseInt(el.dataset.start, 10);
+  const slots = parseInt(el.dataset.slots, 10);
+  const { left, top, colWidth, rowHeight } = cellIndex(day, startSlot);
+  el.style.left = `${left + 2}px`;
+  el.style.top = `${top + 2}px`;
+  el.style.width = `${colWidth - 4}px`;
+  el.style.height = `${rowHeight * slots - 4}px`;
+}
+function updateEventTimeLabel(el) {
+  const startSlot = parseInt(el.dataset.start, 10);
+  const slots = parseInt(el.dataset.slots, 10);
+  const startMin = START_MIN + startSlot * SLOT_MIN;
+  const endMin = startMin + slots * SLOT_MIN;
+  const durationEl = el.querySelector('.duration');
+  if (durationEl) durationEl.textContent = `${minutesToLabel(startMin)} - ${minutesToLabel(endMin)}`;
+}
+
+function bindEventInteractions(el) {
+  const type = el.dataset.type;
+  const slots = parseInt(el.dataset.slots, 10);
+  const title = el.dataset.title;
+  if (type === 'task') {
+    el.setAttribute('draggable', 'true');
+    el.addEventListener('dragstart', (e) => {
+      const day = parseInt(el.dataset.day, 10);
+      const start = parseInt(el.dataset.start, 10);
+      draggingTask = {
+        title,
+        durationMin: slots * SLOT_MIN,
+        slots,
+        fromEvent: true,
+        eventEl: el,
+        fromRange: { day, start, end: start + slots }
+      };
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    el.addEventListener('dragend', () => {
+      clearHighlights();
+      draggingTask = null;
+    });
+    const btnReturn = el.querySelector('.btn-return');
+    if (btnReturn) btnReturn.addEventListener('click', () => {
+      const day = parseInt(el.dataset.day, 10);
+      const start = parseInt(el.dataset.start, 10);
+      occupyRange(day, start, slots, false);
+      addTodoItem(title, slots * SLOT_MIN);
+      el.remove();
+    });
+  } else if (type === 'course') {
+    const btnDelete = el.querySelector('.btn-delete');
+    if (btnDelete) btnDelete.addEventListener('click', () => {
+      const day = parseInt(el.dataset.day, 10);
+      const start = parseInt(el.dataset.start, 10);
+      occupyRange(day, start, slots, false);
+      el.remove();
+    });
+  }
+}
+
+function addEventBlock({ day, startSlot, slots, title, type }) {
+  const el = document.createElement('div');
+  el.className = `event ${type}`;
+  el.dataset.type = type;
+  el.dataset.day = String(day);
+  el.dataset.start = String(startSlot);
+  el.dataset.slots = String(slots);
+  el.dataset.title = title;
+  const startMin = START_MIN + startSlot * SLOT_MIN;
+  const endMin = startMin + slots * SLOT_MIN;
+  const actions = [];
+  if (type === 'task') actions.push('<button class="btn btn-return" title="?¤å??°TODO">?©ï?</button>');
+  if (type === 'course') actions.push('<button class="btn btn-delete" title="?ªé™¤è¡Œç?">?</button>');
+  el.innerHTML = `
+    <div class="title">${title}</div>
+    <div class="duration">${minutesToLabel(startMin)} - ${minutesToLabel(endMin)}</div>
+    <div class="actions">${actions.join('')}</div>
+  `;
+  grid.appendChild(el);
+  positionEventEl(el);
+  bindEventInteractions(el);
+  return el;
+}
+
+// Drag-and-drop
+let draggingTask = null; // {title, durationMin, slots, sourceEl?, fromEvent?, eventEl?, fromRange?}
+
+function setupGridDnD() {
+  grid.addEventListener('dragover', (e) => {
+    if (!draggingTask) return;
+    e.preventDefault();
+    clearHighlights();
+    const info = getIndicesFromPointer(e.clientX, e.clientY);
+    if (!info) return;
+    const { day, slot } = info;
+    const ok = canPlace(day, slot, draggingTask.slots, draggingTask.fromRange);
+    highlightRange(day, slot, draggingTask.slots, ok);
+  });
+  grid.addEventListener('dragleave', (e) => {
+    if (e.relatedTarget && grid.contains(e.relatedTarget)) return;
+    clearHighlights();
+  });
+  grid.addEventListener('drop', (e) => {
+    if (!draggingTask) return;
+    e.preventDefault();
+    const info = getIndicesFromPointer(e.clientX, e.clientY);
+    clearHighlights();
+    if (!info) { draggingTask = null; return; }
+    const { day, slot } = info;
+    const ok = canPlace(day, slot, draggingTask.slots, draggingTask.fromRange);
+    if (!ok) { draggingTask = null; return; }
+
+    if (draggingTask.fromEvent && draggingTask.eventEl) {
+      const oldDay = parseInt(draggingTask.eventEl.dataset.day, 10);
+      const oldStart = parseInt(draggingTask.eventEl.dataset.start, 10);
+      occupyRange(oldDay, oldStart, draggingTask.slots, false);
+      occupyRange(day, slot, draggingTask.slots, true);
+      draggingTask.eventEl.dataset.day = String(day);
+      draggingTask.eventEl.dataset.start = String(slot);
+      positionEventEl(draggingTask.eventEl);
+      updateEventTimeLabel(draggingTask.eventEl);
+    } else {
+      occupyRange(day, slot, draggingTask.slots, true);
+      addEventBlock({ day, startSlot: slot, slots: draggingTask.slots, title: draggingTask.title, type: 'task' });
+      if (draggingTask.sourceEl && draggingTask.sourceEl.parentElement === todoList) draggingTask.sourceEl.remove();
+    }
+    draggingTask = null;
+  });
+}
+
+function makeTaskDraggable(el, title, durationMin) {
+  const slots = durationToSlots(durationMin);
+  el.setAttribute('draggable', 'true');
+  el.addEventListener('dragstart', (e) => {
+    draggingTask = { title, durationMin, slots, sourceEl: el };
+    e.dataTransfer.effectAllowed = 'copyMove';
+  });
+  el.addEventListener('dragend', () => { clearHighlights(); draggingTask = null; });
+}
+
+function addTodoItem(title, durationMin) {
+  const node = taskTemplate.content.firstElementChild.cloneNode(true);
+  node.innerHTML = `<div>${title}</div><div class="meta">${durationMin} ?†é?</div>`;
+  makeTaskDraggable(node, title, durationMin);
+  todoList.appendChild(node);
+}
+
+// Forms
+todoForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const title = document.getElementById('todo-title').value.trim();
+  const duration = parseInt(document.getElementById('todo-duration').value, 10);
+  if (!title || !duration) return;
+  addTodoItem(title, duration);
+  todoForm.reset();
+  document.getElementById('todo-duration').value = 60;
+});
+
+courseForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const title = document.getElementById('course-title').value.trim();
+  const day = parseInt(document.getElementById('course-day').value, 10);
+  const start = document.getElementById('course-start').value || '08:00';
+  const duration = parseInt(document.getElementById('course-duration').value, 10) || 60;
+
+  const [hh, mm] = start.split(':').map(Number);
+  const startMin = hh * 60 + mm;
+  let startSlot = Math.floor((startMin - START_MIN) / SLOT_MIN);
+  startSlot = clamp(startSlot, 0, ROWS - 1);
+  const slots = durationToSlots(duration);
+
+  if (!canPlace(day, startSlot, slots)) {
+    alert('æ­¤æ?æ®µè??¢æ?è¡Œç?è¡ç??–è??ºç???);
+    return;
+  }
+  occupyRange(day, startSlot, slots, true);
+  addEventBlock({ day, startSlot, slots, title, type: 'course' });
+  courseForm.reset();
+  document.getElementById('course-duration').value = 90;
+  document.getElementById('course-start').value = '10:00';
+});
+
+// Allow dropping scheduled task back to TODO list
+todoList.addEventListener('dragover', (e) => {
+  if (!draggingTask || !draggingTask.fromEvent) return;
+  e.preventDefault();
+  todoList.classList.add('drop-target');
+});
+todoList.addEventListener('dragleave', (e) => {
+  if (e.relatedTarget && todoList.contains(e.relatedTarget)) return;
+  todoList.classList.remove('drop-target');
+});
+todoList.addEventListener('drop', (e) => {
+  if (!draggingTask || !draggingTask.fromEvent || !draggingTask.eventEl) return;
+  e.preventDefault();
+  todoList.classList.remove('drop-target');
+  const el = draggingTask.eventEl;
+  const day = parseInt(el.dataset.day, 10);
+  const start = parseInt(el.dataset.start, 10);
+  occupyRange(day, start, draggingTask.slots, false);
+  addTodoItem(draggingTask.title, draggingTask.slots * SLOT_MIN);
+  el.remove();
+  draggingTask = null;
+});
+
+function init() {
+  createGrid();
+  setupGridDnD();
+  // Seed some sample TODOs
+  addTodoItem('å¯«å ±?Šï??”ç©¶?¹æ?', 90);
+  addTodoItem('?žè? Email', 30);
+  addTodoItem('ç¨‹å?ä½œæ¥­ Lab1', 120);
+}
+
+window.addEventListener('load', init);
+window.addEventListener('resize', () => {
+  document.querySelectorAll('.event').forEach(el => positionEventEl(el));
+});
+
+

@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>工作排程原型</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="app-header">
+    <h1>我的一週排程 + TODO 拖曳</h1>
+  </header>
+  <main class="app">
+    <section class="sidebar">
+      <div class="panel">
+        <h2>新增 TODO</h2>
+        <form id="todo-form">
+          <label>
+            任務名稱
+            <input id="todo-title" type="text" placeholder="例如：寫報告" required />
+          </label>
+          <label>
+            估計時間（分鐘）
+            <input id="todo-duration" type="number" min="10" step="10" value="60" required />
+          </label>
+          <button type="submit">加入 TODO</button>
+        </form>
+        <div id="todo-list" class="todo-list" aria-label="TODO 清單"></div>
+      </div>
+
+      <div class="panel">
+        <h2>新增課程/固定行程</h2>
+        <form id="course-form">
+          <label>
+            名稱
+            <input id="course-title" type="text" placeholder="例如：資工概論" required />
+          </label>
+          <div class="row">
+            <label>
+              星期
+              <select id="course-day">
+                <option value="0">日</option>
+                <option value="1">一</option>
+                <option value="2">二</option>
+                <option value="3">三</option>
+                <option value="4">四</option>
+                <option value="5">五</option>
+                <option value="6">六</option>
+              </select>
+            </label>
+            <label>
+              開始時間
+              <input id="course-start" type="time" value="10:00" />
+            </label>
+          </div>
+          <label>
+            時長（分鐘）
+            <input id="course-duration" type="number" min="10" step="10" value="90" />
+          </label>
+          <button type="submit">加入課程</button>
+        </form>
+      </div>
+
+      <div class="panel">
+        <h2>顯示設定</h2>
+        <label>
+          時間格高度（px）
+          <input id="slotHRange" type="range" min="16" max="56" step="2" value="28" />
+        </label>
+      </div>
+    </section>
+
+    <section class="schedule">
+      <div class="schedule-header">
+        <div class="cell time-col"></div>
+        <div class="cell day">週日</div>
+        <div class="cell day">週一</div>
+        <div class="cell day">週二</div>
+        <div class="cell day">週三</div>
+        <div class="cell day">週四</div>
+        <div class="cell day">週五</div>
+        <div class="cell day">週六</div>
+      </div>
+      <div id="grid" class="grid" aria-label="一週時間表"></div>
+    </section>
+  </main>
+
+  <template id="task-template">
+    <div class="task" draggable="true"></div>
+  </template>
+
+  <script src="app.js"></script>
+  </body>
+  </html>
