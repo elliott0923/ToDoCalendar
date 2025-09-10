@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "nextId": 1,
+  "events": [],
+  "todos": [
+    {
+      "title": "寫報告：研究方法",
+      "duration": 90
+    },
+    {
+      "title": "回覆 Email",
+      "duration": 30
+    },
+    {
+      "title": "程式作業 Lab1",
+      "duration": 120
+    }
+  ],
+  "ui": {
+    "slotH": 16
+  }
+}

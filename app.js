@@ -19,6 +19,30 @@ const taskTemplate = document.getElementById('task-template');
 const courseForm = document.getElementById('course-form');
 
 // Utils
+let storageWarningShown = false;
+const API_BASE = '';
+function showStorageWarning(message = '無法儲存資料，請確認未在無痕模式或未封鎖儲存。') {
+  if (storageWarningShown) return;
+  storageWarningShown = true;
+  const bar = document.createElement('div');
+  bar.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:9999;background:#ffeded;color:#b00020;padding:8px 12px;font-size:14px;border-bottom:1px solid #f0c0c0;';
+  bar.textContent = message;
+  const btn = document.createElement('button');
+  btn.textContent = '我知道了';
+  btn.style.cssText = 'margin-left:12px;background:#b00020;color:white;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;';
+  btn.addEventListener('click', () => bar.remove());
+  bar.appendChild(btn);
+  document.body.appendChild(bar);
+}
+
+async function requestPersistentStorage() {
+  try {
+    if (navigator.storage && navigator.storage.persist) {
+      const already = navigator.storage.persisted ? await navigator.storage.persisted() : false;
+      if (!already) await navigator.storage.persist();
+    }
+  } catch {}
+}
 function minutesToLabel(minsFromMidnight) {
   const h = Math.floor(minsFromMidnight / 60).toString().padStart(2, '0');
   const m = (minsFromMidnight % 60).toString().padStart(2, '0');
@@ -98,13 +122,47 @@ function occupyRange(day, startSlot, slots, value = true) {
 
 function findEventById(id) { return events.find(e => e.id === id); }
 function removeEventById(id) { const i = events.findIndex(e => e.id === id); if (i !== -1) events.splice(i,1); }
+async function apiLoadState() {
+  try {
+    const res = await fetch(`${API_BASE}/api/state`, { cache: 'no-store' });
+    if (res.status === 204) return null;
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+async function apiSaveState(state) {
+  try {
+    await fetch(`${API_BASE}/api/state`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(state)
+    });
+  } catch {
+    // ignore; localStorage remains as fallback
+  }
+}
+
 function saveState() {
   const state = { version: 1, nextId, events, todos, ui: { slotH } };
-  try { localStorage.setItem('scheduleState', JSON.stringify(state)); } catch {}
+  try { localStorage.setItem('scheduleState', JSON.stringify(state)); }
+  catch {
+    showStorageWarning();
+  }
+  // also push to backend if可用（若請求失敗就忽略）
+  apiSaveState(state);
 }
-function loadState() {
+async function loadState() {
   let state = null;
-  try { state = JSON.parse(localStorage.getItem('scheduleState') || 'null'); } catch {}
+  // 先嘗試後端
+  state = await apiLoadState();
+  // 後端沒有或失敗，再用 localStorage
+  if (!state) {
+    try { state = JSON.parse(localStorage.getItem('scheduleState') || 'null'); } catch {}
+  }
   if (!state || !state.version) return false;
   if (state.ui && typeof state.ui.slotH === 'number') {
     slotH = state.ui.slotH;
@@ -408,7 +466,7 @@ function injectBackupPanel() {
       todos = data.todos;
       nextId = data.nextId || (Math.max(0, ...events.map(ev=>ev.id||0)) + 1);
       saveState();
-      loadState();
+      await loadState();
     } catch (err) {
       alert('匯入失敗：JSON 格式不正確');
     } finally {
@@ -453,12 +511,13 @@ document.addEventListener('mouseup', () => {
   resizing = null;
 });
 
-function init() {
+async function init() {
   // apply default slot height before grid builds
   applySlotHeight(slotH);
   createGrid();
   setupGridDnD();
-  const loaded = loadState();
+  requestPersistentStorage();
+  const loaded = await loadState();
   if (!loaded) {
     addTodoItem('寫報告：研究方法', 90);
     addTodoItem('回覆 Email', 30);
